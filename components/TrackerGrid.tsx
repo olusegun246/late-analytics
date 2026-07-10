@@ -41,6 +41,7 @@ export default function TrackerGrid({
     empTotal,
     selectedId,
     onToggle,
+    onAddNote,
 }: {
     employees: Employee[];
     days: Date[];
@@ -48,8 +49,20 @@ export default function TrackerGrid({
     empTotal: (empId: number) => number;
     selectedId: number | null;
     onToggle: (empId: number, dateStr: string, type: LatenessType) => void;
+    onAddNote: (
+        empId: number,
+        dateStr: string,
+        type: LatenessType,
+        body: string
+    ) => Promise<void> | void;
 }) {
     const [menu, setMenu] = useState<MenuState | null>(null);
+
+    // Note-box state (lives with the open popup).
+    const [noteText, setNoteText] = useState('');
+    const [noteType, setNoteType] = useState<LatenessType>('work');
+    const [savingNote, setSavingNote] = useState(false);
+    const [noteSaved, setNoteSaved] = useState(false);
 
     const dayTotals = days.map((d) =>
         employees.reduce((sum, e) => sum + getTypes(e.id, toDateStr(d)).length, 0)
@@ -63,10 +76,34 @@ export default function TrackerGrid({
         dateStr: string
     ) => {
         e.preventDefault();
-        // Keep the menu on screen (rough clamp).
-        const x = Math.min(e.clientX, window.innerWidth - 210);
-        const y = Math.min(e.clientY, window.innerHeight - 170);
+        // Keep the popup on screen (rough clamp — it's taller now with the note box).
+        const x = Math.min(e.clientX, window.innerWidth - 240);
+        const y = Math.min(e.clientY, window.innerHeight - 320);
+
+        // Default the note to whatever type is already marked that day.
+        const types = getTypes(empId, dateStr);
+        setNoteType(types[0] ?? 'work');
+        setNoteText('');
+        setNoteSaved(false);
         setMenu({ x, y, empId, dateStr, empName });
+    };
+
+    const closeMenu = () => setMenu(null);
+
+    const saveNote = async () => {
+        if (!menu) return;
+        const body = noteText.trim();
+        if (!body || savingNote) return;
+        setSavingNote(true);
+        try {
+            await onAddNote(menu.empId, menu.dateStr, noteType, body);
+            setNoteText('');
+            setNoteSaved(true);
+            // Let the little "saved" hint linger, then fade.
+            window.setTimeout(() => setNoteSaved(false), 1500);
+        } finally {
+            setSavingNote(false);
+        }
     };
 
     const menuTypes = menu ? getTypes(menu.empId, menu.dateStr) : [];
@@ -174,7 +211,7 @@ export default function TrackerGrid({
                 <>
                     {/* transparent overlay closes the menu on outside click */}
                     <div
-                        onClick={() => setMenu(null)}
+                        onClick={closeMenu}
                         style={{ position: 'fixed', inset: 0, zIndex: 300 }}
                     />
                     <div
@@ -188,7 +225,7 @@ export default function TrackerGrid({
                             borderRadius: 'var(--radius-sm)',
                             boxShadow: 'var(--shadow-lg)',
                             padding: 8,
-                            width: 200,
+                            width: 220,
                         }}
                     >
                         <div
@@ -259,8 +296,110 @@ export default function TrackerGrid({
                                 </div>
                             );
                         })}
+
+                        {/* ── Add a note ── */}
                         <div
-                            onClick={() => setMenu(null)}
+                            style={{
+                                borderTop: '1px solid var(--border-light)',
+                                marginTop: 4,
+                                paddingTop: 8,
+                            }}
+                        >
+                            <div
+                                style={{
+                                    fontSize: 11,
+                                    fontWeight: 700,
+                                    color: 'var(--text-muted)',
+                                    padding: '0 8px 6px',
+                                    display: 'flex',
+                                    justifyContent: 'space-between',
+                                    alignItems: 'center',
+                                }}
+                            >
+                                <span>Add a note</span>
+                                {noteSaved && (
+                                    <span style={{ color: 'var(--brand)', fontWeight: 600 }}>
+                                        ✓ saved
+                                    </span>
+                                )}
+                            </div>
+
+                            <div style={{ padding: '0 8px' }}>
+                                <select
+                                    value={noteType}
+                                    onChange={(e) =>
+                                        setNoteType(e.target.value as LatenessType)
+                                    }
+                                    style={{
+                                        width: '100%',
+                                        fontSize: 12,
+                                        padding: '6px 8px',
+                                        borderRadius: 6,
+                                        border: '1px solid var(--border)',
+                                        background: 'var(--surface)',
+                                        marginBottom: 6,
+                                    }}
+                                >
+                                    {LATENESS_TYPES.map((t) => (
+                                        <option key={t.type} value={t.type}>
+                                            {t.label}
+                                        </option>
+                                    ))}
+                                </select>
+
+                                <textarea
+                                    value={noteText}
+                                    onChange={(e) => setNoteText(e.target.value)}
+                                    onKeyDown={(e) => {
+                                        // Enter saves; Shift+Enter makes a new line.
+                                        if (e.key === 'Enter' && !e.shiftKey) {
+                                            e.preventDefault();
+                                            saveNote();
+                                        }
+                                    }}
+                                    placeholder="e.g. called ahead, traffic on I-45"
+                                    rows={2}
+                                    style={{
+                                        width: '100%',
+                                        fontSize: 13,
+                                        padding: '7px 9px',
+                                        borderRadius: 6,
+                                        border: '1px solid var(--border)',
+                                        background: 'var(--surface)',
+                                        outline: 'none',
+                                        resize: 'vertical',
+                                        fontFamily: 'inherit',
+                                        boxSizing: 'border-box',
+                                    }}
+                                />
+
+                                <button
+                                    onClick={saveNote}
+                                    disabled={savingNote || !noteText.trim()}
+                                    style={{
+                                        width: '100%',
+                                        marginTop: 6,
+                                        fontSize: 12,
+                                        fontWeight: 600,
+                                        padding: '7px 0',
+                                        borderRadius: 6,
+                                        border: 'none',
+                                        cursor:
+                                            savingNote || !noteText.trim()
+                                                ? 'default'
+                                                : 'pointer',
+                                        color: '#fff',
+                                        background: 'var(--brand, #6366f1)',
+                                        opacity: savingNote || !noteText.trim() ? 0.5 : 1,
+                                    }}
+                                >
+                                    {savingNote ? 'Saving…' : 'Add note'}
+                                </button>
+                            </div>
+                        </div>
+
+                        <div
+                            onClick={closeMenu}
                             style={{
                                 textAlign: 'center',
                                 fontSize: 12,
@@ -269,7 +408,7 @@ export default function TrackerGrid({
                                 padding: '8px 0 4px',
                                 cursor: 'pointer',
                                 borderTop: '1px solid var(--border-light)',
-                                marginTop: 4,
+                                marginTop: 8,
                             }}
                         >
                             Done

@@ -20,6 +20,9 @@ import {
     getAllEmployees,
     getEmployeeYear,
     getYearTotals,
+    getEmployeeNotes,
+    addNote as addNoteAction,
+    deleteNote as deleteNoteAction,
 } from './actions';
 
 import Sidebar from '@/components/Sidebar';
@@ -115,6 +118,24 @@ export default function Tracker({
         const recs = await getLatenessForRange(toDateStr(d[0]), toDateStr(d[13]));
         setRecords(recordsToMap(recs));
     }, []);
+
+    // ── add a note straight from the grid popup ──
+    const handleAddNoteFromGrid = useCallback(
+        async (
+            empId: number,
+            dateStr: string,
+            type: LatenessType,
+            body: string
+        ) => {
+            try {
+                await addNoteAction(empId, dateStr, type, body);
+                showToast('📝 Note added');
+            } catch {
+                showToast('⚠️ Could not save note', 'warning');
+            }
+        },
+        [showToast]
+    );
 
     // ── open the full-year records modal ────────
     // Re-fetches every time so the directory stays correct after adds/removes.
@@ -354,6 +375,7 @@ export default function Tracker({
                                 empTotal={empTotal}
                                 selectedId={selectedId}
                                 onToggle={handleToggle}
+                                onAddNote={handleAddNoteFromGrid}
                             />
                         </div>
                     </div>
@@ -387,6 +409,9 @@ export default function Tracker({
                     directoryLoading={allEmployees === null}
                     loadYear={getEmployeeYear}
                     loadYearTotals={getYearTotals}
+                    loadNotes={getEmployeeNotes}
+                    addNote={addNoteAction}
+                    deleteNote={deleteNoteAction}
                     onClose={() => setRecordsOpen(false)}
                 />
             )}

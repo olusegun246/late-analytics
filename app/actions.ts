@@ -7,7 +7,12 @@
 // ============================================================
 
 import { sql } from '@/lib/db';
-import type { Employee, LatenessRecord, LatenessType } from '@/lib/types';
+import type {
+    Employee,
+    LatenessRecord,
+    LatenessType,
+    TardyNote,
+} from '@/lib/types';
 
 /** All active employees, alphabetical. */
 export async function getEmployees(): Promise<Employee[]> {
@@ -130,4 +135,57 @@ export async function getYearTotals(
         GROUP BY employee_id
     `;
     return rows as { employee_id: number; count: number }[];
+}
+
+// ============================================================
+//  Tardy notes — timestamped notes attached to a specific
+//  tardy (employee + date + type). A log: many per tardy.
+// ============================================================
+
+/** All of one employee's notes for a calendar year (oldest first). */
+export async function getEmployeeNotes(
+    employeeId: number,
+    year: number
+): Promise<TardyNote[]> {
+    const rows = await sql`
+        SELECT id,
+               employee_id,
+               to_char(date, 'YYYY-MM-DD') AS date,
+               type,
+               body,
+               to_char(created_at AT TIME ZONE 'UTC',
+                       'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS created_at
+        FROM tardy_notes
+        WHERE employee_id = ${employeeId}
+          AND date >= ${`${year}-01-01`}
+          AND date <= ${`${year}-12-31`}
+        ORDER BY date ASC, created_at ASC
+    `;
+    return rows as TardyNote[];
+}
+
+/** Add a note to a tardy. Returns the created row (with its timestamp). */
+export async function addNote(
+    employeeId: number,
+    dateStr: string,
+    type: LatenessType,
+    body: string
+): Promise<TardyNote> {
+    const rows = await sql`
+        INSERT INTO tardy_notes (employee_id, date, type, body)
+        VALUES (${employeeId}, ${dateStr}, ${type}, ${body.trim()})
+        RETURNING id,
+                  employee_id,
+                  to_char(date, 'YYYY-MM-DD') AS date,
+                  type,
+                  body,
+                  to_char(created_at AT TIME ZONE 'UTC',
+                          'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS created_at
+    `;
+    return rows[0] as TardyNote;
+}
+
+/** Delete a single note by id. */
+export async function deleteNote(noteId: number): Promise<void> {
+    await sql`DELETE FROM tardy_notes WHERE id = ${noteId}`;
 }

@@ -1,7 +1,12 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import type { Employee, LatenessRecord, LatenessType } from '@/lib/types';
+import type {
+    Employee,
+    LatenessRecord,
+    LatenessType,
+    TardyNote,
+} from '@/lib/types';
 import { LATENESS_TYPES } from '@/lib/types';
 import { COLORS } from '@/lib/colors';
 
@@ -30,8 +35,254 @@ function fmtDate(dateStr: string) {
     });
 }
 
+function fmtTime(iso: string) {
+    return new Date(iso).toLocaleString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+    });
+}
+
 function typeMeta(type: LatenessType) {
     return LATENESS_TYPES.find((t) => t.type === type)!;
+}
+
+function Dot({ color, size = 9 }: { color: string; size?: number }) {
+    return (
+        <span
+            style={{
+                width: size,
+                height: size,
+                borderRadius: '50%',
+                background: color,
+                display: 'inline-block',
+                flexShrink: 0,
+            }}
+        />
+    );
+}
+
+// ── one day in the list: tardy types + its note log + an add box ──
+function DayRow({
+    date,
+    types,
+    notes,
+    first,
+    onAdd,
+    onDelete,
+}: {
+    date: string;
+    types: LatenessType[];
+    notes: TardyNote[];
+    first: boolean;
+    onAdd: (date: string, type: LatenessType, body: string) => Promise<void>;
+    onDelete: (noteId: number) => Promise<void>;
+}) {
+    // Which types a note can attach to: the tardies logged that day, or —
+    // for a note-only day — all three so you can still record something.
+    const available = types.length ? types : LATENESS_TYPES.map((t) => t.type);
+    const [draft, setDraft] = useState('');
+    const [noteType, setNoteType] = useState<LatenessType>(available[0]);
+    const [saving, setSaving] = useState(false);
+
+    const submit = async () => {
+        const body = draft.trim();
+        if (!body || saving) return;
+        setSaving(true);
+        try {
+            await onAdd(date, noteType, body);
+            setDraft('');
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    return (
+        <div
+            style={{
+                padding: '12px 14px',
+                borderTop: first ? 'none' : '1px solid var(--border-light)',
+            }}
+        >
+            {/* date + tardy types */}
+            <div
+                style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 12,
+                }}
+            >
+                <span style={{ fontSize: 13, fontWeight: 600 }}>{fmtDate(date)}</span>
+                <span
+                    style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        flexWrap: 'wrap',
+                        justifyContent: 'flex-end',
+                    }}
+                >
+                    {types.map((ty, k) => {
+                        const meta = typeMeta(ty);
+                        return (
+                            <span
+                                key={k}
+                                style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: 5,
+                                    fontSize: 12,
+                                    color: 'var(--text-muted)',
+                                }}
+                            >
+                                <Dot color={meta.color} size={8} />
+                                {meta.label}
+                            </span>
+                        );
+                    })}
+                    {types.length === 0 && (
+                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                            note only
+                        </span>
+                    )}
+                </span>
+            </div>
+
+            {/* note log */}
+            {notes.length > 0 && (
+                <div
+                    style={{
+                        marginTop: 8,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 6,
+                    }}
+                >
+                    {notes.map((n) => {
+                        const meta = typeMeta(n.type);
+                        return (
+                            <div
+                                key={n.id}
+                                style={{
+                                    display: 'flex',
+                                    gap: 8,
+                                    alignItems: 'flex-start',
+                                    fontSize: 12,
+                                    background: 'var(--surface-alt, #f8fafc)',
+                                    borderRadius: 6,
+                                    padding: '6px 8px',
+                                }}
+                            >
+                                <span style={{ paddingTop: 3 }}>
+                                    <Dot color={meta.color} size={8} />
+                                </span>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div
+                                        style={{
+                                            color: 'var(--text-muted)',
+                                            fontSize: 11,
+                                            marginBottom: 2,
+                                        }}
+                                    >
+                                        {meta.label} · {fmtTime(n.created_at)}
+                                    </div>
+                                    <div
+                                        style={{
+                                            whiteSpace: 'pre-wrap',
+                                            wordBreak: 'break-word',
+                                        }}
+                                    >
+                                        {n.body}
+                                    </div>
+                                </div>
+                                <button
+                                    onClick={() => onDelete(n.id)}
+                                    title="Delete note"
+                                    style={{
+                                        background: 'transparent',
+                                        border: 'none',
+                                        cursor: 'pointer',
+                                        color: 'var(--text-muted)',
+                                        fontSize: 12,
+                                        lineHeight: 1,
+                                        padding: 2,
+                                        flexShrink: 0,
+                                    }}
+                                >
+                                    ✕
+                                </button>
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
+
+            {/* add a note */}
+            <div
+                style={{
+                    marginTop: 8,
+                    display: 'flex',
+                    gap: 6,
+                    alignItems: 'center',
+                }}
+            >
+                {available.length > 1 && (
+                    <select
+                        value={noteType}
+                        onChange={(e) => setNoteType(e.target.value as LatenessType)}
+                        style={{
+                            fontSize: 12,
+                            padding: '6px 8px',
+                            borderRadius: 6,
+                            border: '1px solid var(--border)',
+                            background: 'var(--surface)',
+                            flexShrink: 0,
+                        }}
+                    >
+                        {available.map((ty) => (
+                            <option key={ty} value={ty}>
+                                {typeMeta(ty).label}
+                            </option>
+                        ))}
+                    </select>
+                )}
+                <input
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                        if (e.key === 'Enter') submit();
+                    }}
+                    placeholder="Add a note…"
+                    style={{
+                        flex: 1,
+                        fontSize: 13,
+                        padding: '7px 10px',
+                        borderRadius: 6,
+                        border: '1px solid var(--border)',
+                        background: 'var(--surface)',
+                        outline: 'none',
+                        minWidth: 0,
+                    }}
+                />
+                <button
+                    onClick={submit}
+                    disabled={saving || !draft.trim()}
+                    className="btn btn-ghost"
+                    style={{
+                        fontSize: 12,
+                        fontWeight: 600,
+                        padding: '6px 12px',
+                        opacity: saving || !draft.trim() ? 0.5 : 1,
+                        flexShrink: 0,
+                    }}
+                >
+                    Add
+                </button>
+            </div>
+        </div>
+    );
 }
 
 export default function EmployeeRecords({
@@ -40,6 +291,9 @@ export default function EmployeeRecords({
     directoryLoading = false,
     loadYear,
     loadYearTotals,
+    loadNotes,
+    addNote,
+    deleteNote,
     onClose,
 }: {
     employees: Employee[]; // ALL employees — active and removed
@@ -49,11 +303,20 @@ export default function EmployeeRecords({
     loadYearTotals: (
         year: number
     ) => Promise<{ employee_id: number; count: number }[]>;
+    loadNotes: (empId: number, year: number) => Promise<TardyNote[]>;
+    addNote: (
+        empId: number,
+        dateStr: string,
+        type: LatenessType,
+        body: string
+    ) => Promise<TardyNote>;
+    deleteNote: (noteId: number) => Promise<void>;
     onClose: () => void;
 }) {
     const [year, setYear] = useState(() => new Date().getFullYear());
     const [selectedId, setSelectedId] = useState<number | null>(initialEmployeeId);
     const [records, setRecords] = useState<LatenessRecord[]>([]);
+    const [notes, setNotes] = useState<TardyNote[]>([]);
     const [loading, setLoading] = useState(false);
     const [totals, setTotals] = useState<Record<number, number>>({});
     const [search, setSearch] = useState('');
@@ -81,23 +344,42 @@ export default function EmployeeRecords({
         };
     }, [year, loadYearTotals]);
 
-    // Selected employee's full-year records.
+    // Selected employee's full-year records + notes.
     useEffect(() => {
         if (selectedId == null) {
             setRecords([]);
+            setNotes([]);
             return;
         }
         let cancelled = false;
         setLoading(true);
-        loadYear(selectedId, year).then((r) => {
-            if (cancelled) return;
-            setRecords(r);
-            setLoading(false);
-        });
+        Promise.all([loadYear(selectedId, year), loadNotes(selectedId, year)]).then(
+            ([recs, ns]) => {
+                if (cancelled) return;
+                setRecords(recs);
+                setNotes(ns);
+                setLoading(false);
+            }
+        );
         return () => {
             cancelled = true;
         };
-    }, [selectedId, year, loadYear]);
+    }, [selectedId, year, loadYear, loadNotes]);
+
+    const handleAddNote = async (
+        date: string,
+        type: LatenessType,
+        body: string
+    ) => {
+        if (selectedId == null) return;
+        const created = await addNote(selectedId, date, type, body);
+        setNotes((prev) => [...prev, created]);
+    };
+
+    const handleDeleteNote = async (noteId: number) => {
+        await deleteNote(noteId);
+        setNotes((prev) => prev.filter((n) => n.id !== noteId));
+    };
 
     const typeTotals = useMemo(() => {
         const t: Record<LatenessType, number> = {
@@ -117,16 +399,36 @@ export default function EmployeeRecords({
 
     const maxMonth = Math.max(1, ...monthCounts);
 
-    // Group each day's infractions so a single date shows all its type dots.
-    const byDate = useMemo(() => {
+    // tardy types present per date
+    const typesByDate = useMemo(() => {
         const m = new Map<string, LatenessType[]>();
         for (const r of records) {
             const list = m.get(r.date) ?? [];
             list.push(r.type);
             m.set(r.date, list);
         }
-        return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+        return m;
     }, [records]);
+
+    // notes per date
+    const notesByDate = useMemo(() => {
+        const m = new Map<string, TardyNote[]>();
+        for (const n of notes) {
+            const list = m.get(n.date) ?? [];
+            list.push(n);
+            m.set(n.date, list);
+        }
+        return m;
+    }, [notes]);
+
+    // every date that has a tardy OR a note, oldest first
+    const allDates = useMemo(() => {
+        const set = new Set<string>([
+            ...typesByDate.keys(),
+            ...notesByDate.keys(),
+        ]);
+        return [...set].sort((a, b) => a.localeCompare(b));
+    }, [typesByDate, notesByDate]);
 
     // Active employees first, then removed; filtered by the search box.
     const directory = useMemo(() => {
@@ -484,15 +786,7 @@ export default function EmployeeRecords({
                                                             marginBottom: 4,
                                                         }}
                                                     >
-                                                        <span
-                                                            style={{
-                                                                width: 9,
-                                                                height: 9,
-                                                                borderRadius: '50%',
-                                                                background: t.color,
-                                                                display: 'inline-block',
-                                                            }}
-                                                        />
+                                                        <Dot color={t.color} />
                                                         {t.label}
                                                     </div>
                                                     <div style={{ fontSize: 24, fontWeight: 700 }}>
@@ -563,11 +857,11 @@ export default function EmployeeRecords({
                                             ))}
                                         </div>
 
-                                        {/* dated list */}
+                                        {/* dated list with inline notes */}
                                         <div style={{ marginBottom: 8, fontSize: 13, fontWeight: 700 }}>
                                             Every late day
                                         </div>
-                                        {byDate.length === 0 ? (
+                                        {allDates.length === 0 ? (
                                             <div
                                                 style={{
                                                     fontSize: 13,
@@ -585,61 +879,16 @@ export default function EmployeeRecords({
                                                     overflow: 'hidden',
                                                 }}
                                             >
-                                                {byDate.map(([date, types], i) => (
-                                                    <div
+                                                {allDates.map((date, i) => (
+                                                    <DayRow
                                                         key={date}
-                                                        style={{
-                                                            display: 'flex',
-                                                            alignItems: 'center',
-                                                            justifyContent: 'space-between',
-                                                            gap: 12,
-                                                            padding: '10px 14px',
-                                                            borderTop:
-                                                                i === 0
-                                                                    ? 'none'
-                                                                    : '1px solid var(--border-light)',
-                                                        }}
-                                                    >
-                                                        <span style={{ fontSize: 13, fontWeight: 500 }}>
-                                                            {fmtDate(date)}
-                                                        </span>
-                                                        <span
-                                                            style={{
-                                                                display: 'flex',
-                                                                alignItems: 'center',
-                                                                gap: 8,
-                                                                flexWrap: 'wrap',
-                                                                justifyContent: 'flex-end',
-                                                            }}
-                                                        >
-                                                            {types.map((ty, k) => {
-                                                                const meta = typeMeta(ty);
-                                                                return (
-                                                                    <span
-                                                                        key={k}
-                                                                        style={{
-                                                                            display: 'inline-flex',
-                                                                            alignItems: 'center',
-                                                                            gap: 5,
-                                                                            fontSize: 12,
-                                                                            color: 'var(--text-muted)',
-                                                                        }}
-                                                                    >
-                                                                        <span
-                                                                            style={{
-                                                                                width: 8,
-                                                                                height: 8,
-                                                                                borderRadius: '50%',
-                                                                                background: meta.color,
-                                                                                display: 'inline-block',
-                                                                            }}
-                                                                        />
-                                                                        {meta.label}
-                                                                    </span>
-                                                                );
-                                                            })}
-                                                        </span>
-                                                    </div>
+                                                        first={i === 0}
+                                                        date={date}
+                                                        types={typesByDate.get(date) ?? []}
+                                                        notes={notesByDate.get(date) ?? []}
+                                                        onAdd={handleAddNote}
+                                                        onDelete={handleDeleteNote}
+                                                    />
                                                 ))}
                                             </div>
                                         )}

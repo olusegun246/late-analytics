@@ -14,6 +14,17 @@ export interface LatenessRecord {
     type: LatenessType;
 }
 
+// A timestamped note attached to a specific tardy (person + day + type).
+// Multiple notes can stack on the same tardy — it's a log, not a single field.
+export interface TardyNote {
+    id: number;
+    employee_id: number;
+    date: string; // 'YYYY-MM-DD'
+    type: LatenessType;
+    body: string;
+    created_at: string; // ISO 'YYYY-MM-DDTHH:MM:SSZ' (UTC)
+}
+
 // Display metadata for each type: label shown in the menu, dot color,
 // and a single letter used in the CSV export.
 export const LATENESS_TYPES: {
