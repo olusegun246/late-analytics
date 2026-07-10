@@ -48,11 +48,8 @@ export default function Sidebar({
                                 className={`sidebar-employee${
                                     selectedId === emp.id ? ' active' : ''
                                 }`}
-                                onClick={(e) => {
-                                    if (e.ctrlKey || e.metaKey) onEdit(emp);
-                                    else onSelect(emp.id);
-                                }}
-                                title="Click to highlight · Ctrl+Click to edit"
+                                onClick={() => onSelect(emp.id)}
+                                title="Click to highlight"
                             >
                                 <div
                                     className="avatar"
@@ -64,6 +61,36 @@ export default function Sidebar({
                                 <span className={`badge${total === 0 ? ' zero' : ''}`}>
                                     {total}
                                 </span>
+                                {/* Pencil: opens the edit / remove popup */}
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation(); // don't also select the row
+                                        onEdit(emp);
+                                    }}
+                                    title="Edit or remove"
+                                    style={{
+                                        background: 'transparent',
+                                        border: 'none',
+                                        cursor: 'pointer',
+                                        color: '#9ca3af',
+                                        fontSize: 14,
+                                        padding: '2px 4px',
+                                        lineHeight: 1,
+                                        flexShrink: 0,
+                                        borderRadius: 4,
+                                    }}
+                                    onMouseEnter={(e) => {
+                                        e.currentTarget.style.color = '#fff';
+                                        e.currentTarget.style.background =
+                                            'rgba(255,255,255,0.1)';
+                                    }}
+                                    onMouseLeave={(e) => {
+                                        e.currentTarget.style.color = '#9ca3af';
+                                        e.currentTarget.style.background = 'transparent';
+                                    }}
+                                >
+                                    ✎
+                                </button>
                             </div>
                         );
                     })}

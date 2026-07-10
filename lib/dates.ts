@@ -8,8 +8,9 @@
 
 export const PERIOD_LENGTH_DAYS = 14;
 
-// Jan 6 2025 was a Monday and marks the start of a pay period.
-const ANCHOR = new Date(2025, 0, 6);
+// Jul 6 2026 is a Monday and marks the start of a real pay period.
+// (Month is 0-indexed, so 6 = July.) Every period is aligned to this.
+const ANCHOR = new Date(2026, 6, 6);
 
 /** 'YYYY-MM-DD' from a Date, using its LOCAL calendar day (no UTC shift). */
 export function toDateStr(d: Date): string {

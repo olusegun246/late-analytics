@@ -1,7 +1,8 @@
 'use client';
 
 import { useCallback, useMemo, useState } from 'react';
-import type { Employee, LatenessRecord } from '@/lib/types';
+import type { Employee, LatenessRecord, LatenessType } from '@/lib/types';
+import { LATENESS_TYPES } from '@/lib/types';
 import {
     getPeriodDays,
     getPeriodLabel,
@@ -11,11 +12,13 @@ import {
 } from '@/lib/dates';
 import {
     getLatenessForRange,
-    setTally as setTallyAction,
+    toggleLate as toggleLateAction,
     addEmployee as addEmployeeAction,
     updateEmployee as updateEmployeeAction,
     deleteEmployee as deleteEmployeeAction,
-    resetPeriod as resetPeriodAction,
+    getAllEmployees,
+    getEmployeeYear,
+    getYearTotals,
 } from './actions';
 
 import Sidebar from '@/components/Sidebar';
@@ -23,13 +26,19 @@ import StatsBar from '@/components/StatsBar';
 import TrackerGrid from '@/components/TrackerGrid';
 import Analytics from '@/components/Analytics';
 import EmployeeModal from '@/components/EmployeeModal';
+import EmployeeRecords from '@/components/EmployeeRecords';
 
-// Record map key: "employeeId|YYYY-MM-DD"
+// Record map key: "employeeId|YYYY-MM-DD" -> list of lateness types that day
 const rk = (empId: number, dateStr: string) => `${empId}|${dateStr}`;
 
-function recordsToMap(records: LatenessRecord[]): Record<string, number> {
-    const map: Record<string, number> = {};
-    for (const r of records) map[rk(r.employee_id, r.date)] = r.count;
+function recordsToMap(
+    records: LatenessRecord[]
+): Record<string, LatenessType[]> {
+    const map: Record<string, LatenessType[]> = {};
+    for (const r of records) {
+        const key = rk(r.employee_id, r.date);
+        (map[key] ??= []).push(r.type);
+    }
     return map;
 }
 
@@ -49,7 +58,7 @@ export default function Tracker({
     initialPeriodStartMs: number;
 }) {
     const [employees, setEmployees] = useState<Employee[]>(initialEmployees);
-    const [records, setRecords] = useState<Record<string, number>>(
+    const [records, setRecords] = useState<Record<string, LatenessType[]>>(
         recordsToMap(initialRecords)
     );
     const [periodStartMs, setPeriodStartMs] = useState<number>(initialPeriodStartMs);
@@ -58,19 +67,26 @@ export default function Tracker({
     const [modal, setModal] = useState<ModalState>({ open: false, mode: 'add' });
     const [toast, setToast] = useState<{ msg: string; type: string } | null>(null);
 
+    // ── employee records modal (full-year, incl. removed) ──
+    const [recordsOpen, setRecordsOpen] = useState(false);
+    const [allEmployees, setAllEmployees] = useState<Employee[] | null>(null);
+    const [recordsInitialId, setRecordsInitialId] = useState<number | null>(null);
+
     const periodStart = useMemo(() => new Date(periodStartMs), [periodStartMs]);
     const days = useMemo(() => getPeriodDays(periodStart), [periodStart]);
 
     // ── derived values ──────────────────────────
-    const getCount = useCallback(
-        (empId: number, dateStr: string) => records[rk(empId, dateStr)] ?? 0,
+    const getTypes = useCallback(
+        (empId: number, dateStr: string): LatenessType[] =>
+            records[rk(empId, dateStr)] ?? [],
         [records]
     );
 
+    // "Total lates" = total number of infractions (each type counts as one).
     const empTotal = useCallback(
         (empId: number) =>
-            days.reduce((sum, d) => sum + getCount(empId, toDateStr(d)), 0),
-        [days, getCount]
+            days.reduce((sum, d) => sum + getTypes(empId, toDateStr(d)).length, 0),
+        [days, getTypes]
     );
 
     const periodTotal = useMemo(
@@ -96,22 +112,35 @@ export default function Tracker({
         setRecords(recordsToMap(recs));
     }, []);
 
-    // ── cell click (optimistic, then persist) ───
-    const handleCell = useCallback(
-        async (empId: number, dateStr: string, delta: number) => {
-            const current = records[rk(empId, dateStr)] ?? 0;
-            const next = Math.max(0, current + delta);
-            if (next === current) return;
+    // ── open the full-year records modal ────────
+    // Re-fetches every time so the directory stays correct after adds/removes.
+    const openRecords = useCallback(async (empId: number | null = null) => {
+        setRecordsInitialId(empId);
+        setAllEmployees(null);
+        setRecordsOpen(true);
+        setAllEmployees(await getAllEmployees());
+    }, []);
+
+    // ── toggle one type on a day (optimistic, then persist) ──
+    const handleToggle = useCallback(
+        async (empId: number, dateStr: string, type: LatenessType) => {
+            const key = rk(empId, dateStr);
+            const current = records[key] ?? [];
+            const on = !current.includes(type); // clicking flips it
 
             setRecords((prev) => {
                 const copy = { ...prev };
-                if (next <= 0) delete copy[rk(empId, dateStr)];
-                else copy[rk(empId, dateStr)] = next;
+                const set = new Set(copy[key] ?? []);
+                if (on) set.add(type);
+                else set.delete(type);
+                const next = [...set];
+                if (next.length === 0) delete copy[key];
+                else copy[key] = next;
                 return copy;
             });
 
             try {
-                await setTallyAction(empId, dateStr, next);
+                await toggleLateAction(empId, dateStr, type, on);
             } catch {
                 showToast('⚠️ Could not save — reloading', 'warning');
                 await loadPeriod(periodStart); // resync on failure
@@ -137,25 +166,8 @@ export default function Tracker({
         await loadPeriod(start);
     }, [loadPeriod]);
 
-    const handleReset = useCallback(async () => {
-        if (
-            !window.confirm(
-                `Reset ALL lateness data for ${getPeriodLabel(
-                    periodStart
-                )}? This cannot be undone.`
-            )
-        )
-            return;
-        await resetPeriodAction(toDateStr(days[0]), toDateStr(days[13]));
-        setRecords({});
-        showToast('🔄 Period reset');
-    }, [periodStart, days, showToast]);
-
     // ── employee add / edit / remove ────────────
-    const openAdd = useCallback(
-        () => setModal({ open: true, mode: 'add' }),
-        []
-    );
+    const openAdd = useCallback(() => setModal({ open: true, mode: 'add' }), []);
     const openEdit = useCallback(
         (emp: Employee) => setModal({ open: true, mode: 'edit', employee: emp }),
         []
@@ -211,13 +223,21 @@ export default function Tracker({
         showToast(`🗑️ ${emp.name} removed`);
     }, [modal, selectedId, closeModal, showToast]);
 
-    // ── CSV export ──────────────────────────────
+    // ── CSV export (letters per day: W / L / B) ──
     const exportCSV = useCallback(() => {
-        let csv = 'Employee,' + days.map((d) => toDateStr(d)).join(',') + ',Total\n';
+        const letterOf = (t: LatenessType) =>
+            LATENESS_TYPES.find((x) => x.type === t)?.letter ?? '?';
+
+        let csv =
+            'Employee,' + days.map((d) => toDateStr(d)).join(',') + ',Total\n';
         for (const e of employees) {
-            const cells = days.map((d) => getCount(e.id, toDateStr(d)));
-            const total = cells.reduce((a, b) => a + b, 0);
-            csv += `"${e.name}",${cells.join(',')},${total}\n`;
+            let total = 0;
+            const cells = days.map((d) => {
+                const types = getTypes(e.id, toDateStr(d));
+                total += types.length;
+                return types.map(letterOf).join('+');
+            });
+            csv += `"${e.name}",${cells.map((c) => `"${c}"`).join(',')},${total}\n`;
         }
         const blob = new Blob([csv], { type: 'text/csv' });
         const url = URL.createObjectURL(blob);
@@ -227,7 +247,7 @@ export default function Tracker({
         a.click();
         URL.revokeObjectURL(url);
         showToast('📥 CSV exported');
-    }, [days, employees, getCount, showToast]);
+    }, [days, employees, getTypes, showToast]);
 
     // ── render ──────────────────────────────────
     return (
@@ -277,11 +297,11 @@ export default function Tracker({
                         >
                             📊 Analytics
                         </button>
+                        <button className="btn btn-ghost" onClick={() => openRecords()}>
+                            👥 Records
+                        </button>
                         <button className="btn btn-ghost" onClick={exportCSV}>
                             📥 Export CSV
-                        </button>
-                        <button className="btn btn-ghost" onClick={handleReset}>
-                            🔄 Reset Period
                         </button>
                     </div>
                 </header>
@@ -296,21 +316,40 @@ export default function Tracker({
                 <div className="content">
                     <div className="panel" style={{ flex: 1 }}>
                         <div className="panel-header">
-                            <h3>📅 Pay Period Grid — Click cells to tally lates</h3>
-                            <span
-                                style={{ fontSize: 11, color: 'var(--text-muted)' }}
-                            >
-                                Right-click to decrement
+                            <h3>📅 Pay Period Grid — Click a day to mark lateness</h3>
+                            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                                {LATENESS_TYPES.map((t) => (
+                                    <span
+                                        key={t.type}
+                                        style={{
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: 4,
+                                            marginLeft: 12,
+                                        }}
+                                    >
+                                        <span
+                                            style={{
+                                                width: 8,
+                                                height: 8,
+                                                borderRadius: '50%',
+                                                background: t.color,
+                                                display: 'inline-block',
+                                            }}
+                                        />
+                                        {t.label}
+                                    </span>
+                                ))}
                             </span>
                         </div>
                         <div className="panel-body">
                             <TrackerGrid
                                 employees={employees}
                                 days={days}
-                                getCount={getCount}
+                                getTypes={getTypes}
                                 empTotal={empTotal}
                                 selectedId={selectedId}
-                                onCell={handleCell}
+                                onToggle={handleToggle}
                             />
                         </div>
                     </div>
@@ -337,9 +376,18 @@ export default function Tracker({
                 />
             )}
 
-            {toast && (
-                <div className={`toast ${toast.type} show`}>{toast.msg}</div>
+            {recordsOpen && (
+                <EmployeeRecords
+                    employees={allEmployees ?? []}
+                    initialEmployeeId={recordsInitialId}
+                    directoryLoading={allEmployees === null}
+                    loadYear={getEmployeeYear}
+                    loadYearTotals={getYearTotals}
+                    onClose={() => setRecordsOpen(false)}
+                />
             )}
+
+            {toast && <div className={`toast ${toast.type} show`}>{toast.msg}</div>}
         </>
     );
 }

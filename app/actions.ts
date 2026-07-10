@@ -7,7 +7,7 @@
 // ============================================================
 
 import { sql } from '@/lib/db';
-import type { Employee, LatenessRecord } from '@/lib/types';
+import type { Employee, LatenessRecord, LatenessType } from '@/lib/types';
 
 /** All active employees, alphabetical. */
 export async function getEmployees(): Promise<Employee[]> {
@@ -28,7 +28,7 @@ export async function getLatenessForRange(
     const rows = await sql`
         SELECT employee_id,
                to_char(date, 'YYYY-MM-DD') AS date,
-               count
+               type
         FROM lateness_records
         WHERE date >= ${startStr} AND date <= ${endStr}
     `;
@@ -52,40 +52,82 @@ export async function updateEmployee(id: number, name: string): Promise<void> {
 
 /**
  * Soft-delete: mark inactive instead of deleting. This PRESERVES their
- * lateness history rather than destroying it (unlike the original).
+ * lateness history rather than destroying it.
  */
 export async function deleteEmployee(id: number): Promise<void> {
     await sql`UPDATE employees SET active = false WHERE id = ${id}`;
 }
 
 /**
- * Set the tally for one employee on one day (an upsert).
- * A count of 0 or less removes the row entirely.
+ * Turn one lateness type on or off for an employee on a day.
+ *   on = true  -> record that this type happened (insert)
+ *   on = false -> remove it (the "clicked by accident" undo)
  */
-export async function setTally(
+export async function toggleLate(
     employeeId: number,
     dateStr: string,
-    count: number
+    type: LatenessType,
+    on: boolean
 ): Promise<void> {
-    if (count <= 0) {
+    if (on) {
         await sql`
-            DELETE FROM lateness_records
-            WHERE employee_id = ${employeeId} AND date = ${dateStr}
+            INSERT INTO lateness_records (employee_id, date, type)
+            VALUES (${employeeId}, ${dateStr}, ${type})
+            ON CONFLICT (employee_id, date, type) DO NOTHING
         `;
     } else {
         await sql`
-            INSERT INTO lateness_records (employee_id, date, count)
-            VALUES (${employeeId}, ${dateStr}, ${count})
-            ON CONFLICT (employee_id, date)
-            DO UPDATE SET count = ${count}
+            DELETE FROM lateness_records
+            WHERE employee_id = ${employeeId}
+              AND date = ${dateStr}
+              AND type = ${type}
         `;
     }
 }
 
-/** Wipe all records for a date range (the "Reset Period" button). */
-export async function resetPeriod(startStr: string, endStr: string): Promise<void> {
-    await sql`
-        DELETE FROM lateness_records
-        WHERE date >= ${startStr} AND date <= ${endStr}
+// ============================================================
+//  Employee Records feature — full-year, per-employee view
+//  including removed (inactive) employees.
+// ============================================================
+
+/** Every employee — active AND removed — for the records directory. */
+export async function getAllEmployees(): Promise<Employee[]> {
+    const rows = await sql`
+        SELECT id, name, active
+        FROM employees
+        ORDER BY active DESC, name ASC
     `;
+    return rows as Employee[];
+}
+
+/** One employee's lateness rows for a whole calendar year. */
+export async function getEmployeeYear(
+    employeeId: number,
+    year: number
+): Promise<LatenessRecord[]> {
+    const rows = await sql`
+        SELECT employee_id,
+               to_char(date, 'YYYY-MM-DD') AS date,
+               type
+        FROM lateness_records
+        WHERE employee_id = ${employeeId}
+          AND date >= ${`${year}-01-01`}
+          AND date <= ${`${year}-12-31`}
+        ORDER BY date ASC
+    `;
+    return rows as LatenessRecord[];
+}
+
+/** Per-employee counts for a year — one query feeds all directory badges. */
+export async function getYearTotals(
+    year: number
+): Promise<{ employee_id: number; count: number }[]> {
+    const rows = await sql`
+        SELECT employee_id, COUNT(*)::int AS count
+        FROM lateness_records
+        WHERE date >= ${`${year}-01-01`}
+          AND date <= ${`${year}-12-31`}
+        GROUP BY employee_id
+    `;
+    return rows as { employee_id: number; count: number }[];
 }
