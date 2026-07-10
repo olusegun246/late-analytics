@@ -8,6 +8,7 @@ import {
     getPeriodLabel,
     getWorkDaysRemaining,
     toDateStr,
+    fromDateStr,
     addDays,
 } from '@/lib/dates';
 import {
@@ -51,17 +52,17 @@ interface ModalState {
 export default function Tracker({
     initialEmployees,
     initialRecords,
-    initialPeriodStartMs,
+    initialPeriodStart,
 }: {
     initialEmployees: Employee[];
     initialRecords: LatenessRecord[];
-    initialPeriodStartMs: number;
+    initialPeriodStart: string; // 'YYYY-MM-DD' — timezone-safe handoff from the server
 }) {
     const [employees, setEmployees] = useState<Employee[]>(initialEmployees);
     const [records, setRecords] = useState<Record<string, LatenessType[]>>(
         recordsToMap(initialRecords)
     );
-    const [periodStartMs, setPeriodStartMs] = useState<number>(initialPeriodStartMs);
+    const [periodStartStr, setPeriodStartStr] = useState<string>(initialPeriodStart);
     const [selectedId, setSelectedId] = useState<number | null>(null);
     const [analyticsOpen, setAnalyticsOpen] = useState(false);
     const [modal, setModal] = useState<ModalState>({ open: false, mode: 'add' });
@@ -72,7 +73,10 @@ export default function Tracker({
     const [allEmployees, setAllEmployees] = useState<Employee[] | null>(null);
     const [recordsInitialId, setRecordsInitialId] = useState<number | null>(null);
 
-    const periodStart = useMemo(() => new Date(periodStartMs), [periodStartMs]);
+    const periodStart = useMemo(
+        () => fromDateStr(periodStartStr),
+        [periodStartStr]
+    );
     const days = useMemo(() => getPeriodDays(periodStart), [periodStart]);
 
     // ── derived values ──────────────────────────
@@ -153,7 +157,7 @@ export default function Tracker({
     const navigate = useCallback(
         async (dir: number) => {
             const newStart = addDays(periodStart, dir * 14);
-            setPeriodStartMs(newStart.getTime());
+            setPeriodStartStr(toDateStr(newStart));
             await loadPeriod(newStart);
         },
         [periodStart, loadPeriod]
@@ -162,7 +166,7 @@ export default function Tracker({
     const goToday = useCallback(async () => {
         const { getCurrentPeriodStart } = await import('@/lib/dates');
         const start = getCurrentPeriodStart();
-        setPeriodStartMs(start.getTime());
+        setPeriodStartStr(toDateStr(start));
         await loadPeriod(start);
     }, [loadPeriod]);
 

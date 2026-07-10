@@ -20,7 +20,10 @@ export default async function Page() {
         <Tracker
             initialEmployees={employees}
             initialRecords={records}
-            initialPeriodStartMs={periodStart.getTime()}
+            // Pass a plain 'YYYY-MM-DD' string, NOT a timestamp — a string has
+            // no timezone, so the client reads the same calendar day the server
+            // computed instead of shifting it back a day.
+            initialPeriodStart={toDateStr(periodStart)}
         />
     );
 }

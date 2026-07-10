@@ -20,6 +20,17 @@ export function toDateStr(d: Date): string {
     return `${y}-${m}-${day}`;
 }
 
+/**
+ * Build a Date from a 'YYYY-MM-DD' string using the LOCAL calendar day.
+ * This is the inverse of toDateStr(). Using the (y, m, d) constructor
+ * avoids new Date('2026-07-06') — that parses as UTC midnight and can
+ * land on the previous day once the browser shifts it to local time.
+ */
+export function fromDateStr(s: string): Date {
+    const [y, m, d] = s.split('-').map(Number);
+    return new Date(y, m - 1, d);
+}
+
 export function addDays(d: Date, n: number): Date {
     const r = new Date(d);
     r.setDate(r.getDate() + n);
